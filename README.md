@@ -172,6 +172,7 @@ The production version of the app requires Firebase setup and authenticated data
 - Trust matters in gamified systems: awarding points and progress must happen on the server, not the client.
 - AI can personalize habit-building, but it should support everyday life rather than create unrealistic demands.
 - Clean UX and friendly design are critical for habit apps; the product needs to feel encouraging, not transactional.
+- API rate limits kept reaching whenever we try to attempt to fetch data
 
 ## 📌 Project summary
 
