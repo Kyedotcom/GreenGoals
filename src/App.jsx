@@ -89,6 +89,13 @@ const navItems = [
 
 function Icon({ name, size = 20, className = "" }) {
   const paths = {
+    alert: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v5" />
+        <path d="M12 16.4v.1" />
+      </>
+    ),
     arrow: (
       <>
         <path d="M5 12h14" />
@@ -105,6 +112,12 @@ function Icon({ name, size = 20, className = "" }) {
       <>
         <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
         <path d="M10 21h4" />
+      </>
+    ),
+    camera: (
+      <>
+        <path d="M4 8h2.6L8 6h8l1.4 2H20a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
+        <circle cx="12" cy="13" r="3.4" />
       </>
     ),
     check: <path d="m5 12 4 4L19 6" />,
@@ -506,6 +519,226 @@ function LandingPage({ onSignIn }) {
   );
 }
 
+const maxProofDimension = 1024;
+
+function compressProofImage(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(
+        1,
+        maxProofDimension / Math.max(image.width, image.height),
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("Canvas is unavailable."));
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+      resolve({
+        dataUrl,
+        mimeType: "image/jpeg",
+        data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+      });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("That photo could not be read."));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function ProofModal({ challenge, busy, verdict, error, onSubmit, onClose }) {
+  const [note, setNote] = useState("");
+  const [image, setImage] = useState(null);
+  const [imageError, setImageError] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const fileInputRef = useRef(null);
+  const verified = verdict?.verified === true;
+  const ready = Boolean(image) || note.trim().length >= 10;
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [busy, onClose]);
+
+  const pickImage = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageError("Choose an image file.");
+      return;
+    }
+    setImageError("");
+    setPreparing(true);
+    try {
+      setImage(await compressProofImage(file));
+    } catch {
+      setImageError("We could not read that photo. Try another one.");
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        className="signin-modal proof-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="proof-title"
+      >
+        <button
+          className="modal-close"
+          type="button"
+          onClick={onClose}
+          disabled={busy}
+          aria-label="Close proof check"
+        >
+          <Icon name="close" />
+        </button>
+        <span className={`modal-mark${verified ? " modal-mark-verified" : ""}`}>
+          <Icon name={verified ? "check" : "camera"} size={24} />
+        </span>
+        <p className="eyebrow">{verified ? "Verified" : "Show your work"}</p>
+        <h2 id="proof-title">{verified ? "That counts." : challenge.title}</h2>
+        {verified ? (
+          <>
+            <p className="modal-copy">{verdict.reason}</p>
+            <p className="proof-points">+{verdict.pointsEarned} pts</p>
+          </>
+        ) : (
+          <>
+            <p className="modal-copy">
+              Add a photo, a quick note, or both. Gemini checks it against the
+              challenge before your points land.
+            </p>
+            <input
+              ref={fileInputRef}
+              className="proof-file-input"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={pickImage}
+              disabled={busy}
+            />
+            {image ? (
+              <div className="proof-preview">
+                <img src={image.dataUrl} alt="The proof you attached" />
+                <div className="proof-preview-actions">
+                  <button
+                    className="proof-link"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    className="proof-link"
+                    type="button"
+                    onClick={() => setImage(null)}
+                    disabled={busy}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="button button-outline proof-photo-button"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy || preparing}
+              >
+                <Icon name="camera" size={18} />
+                {preparing ? "Preparing photo…" : "Add a photo"}
+              </button>
+            )}
+            <label className="proof-label" htmlFor="proof-note">
+              How did you do it?
+            </label>
+            <textarea
+              id="proof-note"
+              className="proof-note"
+              rows={3}
+              maxLength={600}
+              placeholder="Biked to the store instead of driving — about two miles."
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              disabled={busy}
+            />
+            {verdict && !verdict.verified && (
+              <p className="proof-rejection" role="alert">
+                <Icon name="alert" size={17} />
+                <span>{verdict.reason}</span>
+              </p>
+            )}
+            {(imageError || error) && (
+              <p className="form-error" role="alert">
+                {imageError || error}
+              </p>
+            )}
+            <div className="proof-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                className="button button-primary"
+                type="button"
+                disabled={busy || preparing || !ready}
+                onClick={() =>
+                  onSubmit({
+                    text: note.trim(),
+                    image: image
+                      ? { mimeType: image.mimeType, data: image.data }
+                      : null,
+                  })
+                }
+              >
+                {busy ? (
+                  "Checking…"
+                ) : (
+                  <>
+                    Verify <Icon name="arrow" size={16} />
+                  </>
+                )}
+              </button>
+            </div>
+            <p className="proof-hint">
+              {ready
+                ? "Your proof is checked by Gemini before points are awarded."
+                : "Add a photo, or at least a sentence about what you did."}
+            </p>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function ChallengeCard({ challenge, completed, onComplete }) {
   return (
     <article
@@ -526,15 +759,21 @@ function ChallengeCard({ challenge, completed, onComplete }) {
             <Icon name="leaf" size={15} /> {challenge.points} pts
           </span>
         </div>
+        {completed && challenge.verifiedReason && (
+          <p className="challenge-verified">
+            <Icon name="sparkle" size={14} /> {challenge.verifiedReason}
+          </p>
+        )}
       </div>
       <button
         className={`challenge-action${completed ? " completed-button" : ""}`}
         type="button"
-        onClick={() => onComplete(challenge.id)}
+        disabled={completed}
+        onClick={() => onComplete(challenge)}
         aria-label={
           completed
             ? `${challenge.title} completed`
-            : `Complete ${challenge.title}`
+            : `Prove you completed ${challenge.title}`
         }
       >
         {completed ? (
@@ -625,14 +864,14 @@ function LeaderboardRows({ full = false, points, profile, entries = null }) {
   );
 }
 
-function LoadingState({ busy, onRetry }) {
+function LoadingState({ busy, error, onRetry }) {
   return (
     <div className="loading-state">
       <span className="loading-sprout">🌱</span>
       <p>
         {busy
           ? "Growing your fresh challenges…"
-          : "Your next good thing is waiting."}
+          : error || "Your next good thing is waiting."}
       </p>
       {!busy && (
         <button type="button" className="stat-inline-link" onClick={onRetry}>
@@ -663,6 +902,10 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
   const [demoGroupType, setDemoGroupType] = useState("Friends");
   const [groupTypeInput, setGroupTypeInput] = useState("Friends");
   const [groupInput, setGroupInput] = useState("");
+  const [proofChallenge, setProofChallenge] = useState(null);
+  const [proofBusy, setProofBusy] = useState(false);
+  const [proofVerdict, setProofVerdict] = useState(null);
+  const [proofError, setProofError] = useState("");
   const challenges = isDemo ? localChallenges : dataState.challenges;
   const demoContribution = localChallenges
     .filter((challenge) => completedIds.includes(challenge.id))
@@ -686,7 +929,9 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
         .toUpperCase()
     : "TG";
   const photo = profile?.picture;
-  const completedCount = completedIds.length;
+  const completedCount = isDemo
+    ? completedIds.length
+    : challenges.filter((challenge) => challenge.completed).length;
   const currentStreak = isDemo ? 7 : dataState.user?.streakDays || 0;
   const completedTotal = isDemo
     ? completedCount + 12
@@ -699,53 +944,98 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
   const leaderboardCount = isDemo
     ? leaderboard.length
     : dataState.leaderboard.length;
-  const completeChallenge = async (id) => {
+  const startProof = (challenge) => {
+    setProofVerdict(null);
+    setProofError("");
+    setProofBusy(false);
+    setProofChallenge(challenge);
+  };
+  const closeProof = () => {
+    setProofChallenge(null);
+    setProofVerdict(null);
+    setProofError("");
+  };
+  const submitProof = async (proof) => {
+    const challenge = proofChallenge;
+    if (!challenge || proofBusy) return;
+    setProofBusy(true);
+    setProofVerdict(null);
+    setProofError("");
     if (isDemo) {
-      setCompletedIds((current) =>
-        current.includes(id) ? current : [...current, id],
-      );
+      window.setTimeout(() => {
+        setProofBusy(false);
+        setProofVerdict({
+          verified: true,
+          reason:
+            "Demo mode takes your word for it — sign in to have Gemini check your proof.",
+          pointsEarned: challenge.points,
+        });
+        setCompletedIds((current) =>
+          current.includes(challenge.id) ? current : [...current, challenge.id],
+        );
+        window.setTimeout(closeProof, 1900);
+      }, 700);
       return;
     }
     setDataState((state) => ({ ...state, busyAction: true, error: "" }));
     try {
-      const result = await completeChallengeRequest(id);
+      const result = await completeChallengeRequest(challenge.id, proof);
+      setProofBusy(false);
+      if (!result.verified) {
+        setProofVerdict({ verified: false, reason: result.reason });
+        setDataState((state) => ({ ...state, busyAction: false }));
+        return;
+      }
+      setProofVerdict({
+        verified: true,
+        reason: result.reason,
+        pointsEarned: result.pointsEarned,
+      });
+      // The points balance arrives through the live users/{uid} listener,
+      // which can fire before this response; adding them here too would
+      // double-count the reward on screen.
       setDataState((state) => ({
         ...state,
         busyAction: false,
-        user: {
-          ...state.user,
-          points: (state.user?.points || 0) + result.pointsEarned,
-          completedCount: (state.user?.completedCount || 0) + 1,
-        },
-        challenges: state.challenges.map((challenge) =>
-          challenge.id === id ? { ...challenge, completed: true } : challenge,
+        challenges: state.challenges.map((item) =>
+          item.id === challenge.id
+            ? { ...item, completed: true, verifiedReason: result.reason }
+            : item,
         ),
       }));
+      window.setTimeout(closeProof, 1900);
     } catch (error) {
-      setDataState((state) => ({
-        ...state,
-        busyAction: false,
-        error: error.message || "Could not complete this challenge.",
-      }));
+      setProofBusy(false);
+      setProofError(error.message || "Could not complete this challenge.");
+      setDataState((state) => ({ ...state, busyAction: false }));
     }
   };
-  const refreshChallenges = async () => {
-    setDataState((state) => ({ ...state, busyAction: true, error: "" }));
+  const loadChallenges = async (forceRefresh) => {
+    if (dataState.generating) return;
+    setDataState((state) => ({
+      ...state,
+      generating: true,
+      challengeError: "",
+    }));
     try {
-      const result = await generateChallenges({ forceRefresh: true });
+      const result = await generateChallenges({ forceRefresh });
       setDataState((state) => ({
         ...state,
-        busyAction: false,
+        generating: false,
         challenges: result.challenges,
       }));
     } catch (error) {
       setDataState((state) => ({
         ...state,
-        busyAction: false,
-        error: error.message || "Could not generate challenges.",
+        generating: false,
+        challengeError: error.message || "Could not generate challenges.",
       }));
     }
   };
+  const retryChallenges = () => loadChallenges(false);
+  const refreshChallenges = () => loadChallenges(true);
+  const allChallengesDone =
+    challenges.length > 0 && challenges.every((challenge) => challenge.completed);
   const createGroup = async () => {
     if (isDemo) {
       if (groupInput.trim().length < 3) return;
@@ -1012,14 +1302,15 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
                       ? completedIds.includes(challenge.id)
                       : challenge.completed
                   }
-                  onComplete={completeChallenge}
+                  onComplete={startProof}
                 />
               ))}
             </div>
           ) : (
             <LoadingState
-              busy={dataState.busyAction}
-              onRetry={refreshChallenges}
+              busy={dataState.generating}
+              error={dataState.challengeError}
+              onRetry={retryChallenges}
             />
           )}
         </section>
@@ -1121,31 +1412,43 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
                   ? completedIds.includes(challenge.id)
                   : challenge.completed
               }
-              onComplete={completeChallenge}
+              onComplete={startProof}
             />
           ))}
         </div>
       ) : (
-        <LoadingState busy={dataState.busyAction} onRetry={refreshChallenges} />
+        <LoadingState
+          busy={dataState.generating}
+          error={dataState.challengeError}
+          onRetry={retryChallenges}
+        />
       )}
       <div className="ai-note">
         <span className="ai-note-icon">
           <Icon name="sparkle" size={19} />
         </span>
         <span>
-          <strong>Fresh challenges, just for today.</strong>
+          <strong>
+            {allChallengesDone
+              ? "All done for today. Nice work!"
+              : "Fresh challenges, just for today."}
+          </strong>
           <small>
-            Generated for real life — practical, safe, and good for the planet.
+            {challenges.length && dataState.challengeError
+              ? dataState.challengeError
+              : allChallengesDone
+              ? "Your points are in. New challenges arrive tomorrow."
+              : "Generated by Gemini for real life — practical, safe, and good for the planet. Swapping keeps the ones you’ve finished."}
           </small>
         </span>
-        {!isDemo && (
+        {!isDemo && challenges.length > 0 && !allChallengesDone && (
           <button
             className="button button-outline refresh-challenges"
-            disabled={dataState.busyAction}
+            disabled={dataState.generating}
             type="button"
             onClick={refreshChallenges}
           >
-            {dataState.busyAction ? "Generating" : "Suggest new challenges"}
+            {dataState.generating ? "Generating…" : "Suggest new challenges"}
           </button>
         )}
       </div>
@@ -1684,9 +1987,20 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
             </div>
           </div>
           {dataState.error && (
-            <p className="backend-error" role="alert">
-              {dataState.error}
-            </p>
+            <div className="backend-error" role="alert">
+              <Icon name="alert" size={17} />
+              <span>{dataState.error}</span>
+              <button
+                className="backend-error-dismiss"
+                type="button"
+                aria-label="Dismiss message"
+                onClick={() =>
+                  setDataState((state) => ({ ...state, error: "" }))
+                }
+              >
+                <Icon name="close" size={15} />
+              </button>
+            </div>
           )}
           {pageContent}
           <footer className="dashboard-footer">
@@ -1703,9 +2017,31 @@ function Dashboard({ profile, isDemo, onSignOut, dataState, setDataState }) {
           </footer>
         </div>
       </section>
+      {proofChallenge && (
+        <ProofModal
+          challenge={proofChallenge}
+          busy={proofBusy}
+          verdict={proofVerdict}
+          error={proofError}
+          onSubmit={submitProof}
+          onClose={closeProof}
+        />
+      )}
     </main>
   );
 }
+
+const emptyDataState = {
+  user: null,
+  group: null,
+  groupContribution: 0,
+  challenges: [],
+  leaderboard: [],
+  busyAction: false,
+  generating: false,
+  challengeError: "",
+  error: "",
+};
 
 function App() {
   const [profile, setProfile] = useState(null);
@@ -1713,15 +2049,7 @@ function App() {
   const [isSignInOpen, setIsSignInOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(firebaseReady);
   const [authError, setAuthError] = useState("");
-  const [dataState, setDataState] = useState({
-    user: null,
-    group: null,
-    groupContribution: 0,
-    challenges: [],
-    leaderboard: [],
-    busyAction: false,
-    error: "",
-  });
+  const [dataState, setDataState] = useState(emptyDataState);
   const generationRequested = useRef("");
 
   useEffect(() => {
@@ -1751,15 +2079,7 @@ function App() {
           if (!user) {
             setProfile(null);
             setIsDemo(false);
-            setDataState({
-              user: null,
-              group: null,
-              groupContribution: 0,
-              challenges: [],
-              leaderboard: [],
-              busyAction: false,
-              error: "",
-            });
+            setDataState(emptyDataState);
             return;
           }
           setProfile({
@@ -1769,15 +2089,7 @@ function App() {
             picture: user.photoURL || "",
           });
           setIsDemo(false);
-          setDataState({
-            user: null,
-            group: null,
-            groupContribution: 0,
-            challenges: [],
-            leaderboard: [],
-            busyAction: true,
-            error: "",
-          });
+          setDataState({ ...emptyDataState, busyAction: true });
           let firebase;
           try {
             firebase = await loadDataServices();
@@ -1897,22 +2209,27 @@ function App() {
               })),
           );
 
+          // Challenges are generated per UTC day, matching the server.
+          const today = new Date().toISOString().slice(0, 10);
           const challengesQuery = firestoreModule.query(
             firestoreModule.collection(db, "users", user.uid, "challenges"),
-            firestoreModule.orderBy("createdAt", "desc"),
-            firestoreModule.limit(3),
+            firestoreModule.where("day", "==", today),
           );
           stopChallenges = firestoreModule.onSnapshot(
             challengesQuery,
             (snapshot) => {
-              const today = new Date().toISOString().slice(0, 10);
               const challenges = snapshot.docs
                 .map((challenge) => ({ id: challenge.id, ...challenge.data() }))
-                .filter((challenge) => challenge.day === today);
+                .sort(
+                  (a, b) =>
+                    (a.slot ?? Number(a.id.slice(-1)) - 1) -
+                    (b.slot ?? Number(b.id.slice(-1)) - 1),
+                );
               setDataState((state) => ({
                 ...state,
                 challenges,
-                busyAction: challenges.length ? false : state.busyAction,
+                generating: challenges.length ? false : state.generating,
+                challengeError: challenges.length ? "" : state.challengeError,
               }));
               if (
                 !challenges.length &&
@@ -1921,24 +2238,29 @@ function App() {
                 generationRequested.current = user.uid;
                 setDataState((state) => ({
                   ...state,
-                  busyAction: true,
-                  error: "",
+                  generating: true,
+                  challengeError: "",
                 }));
-                generateChallenges().catch((error) => {
-                  generationRequested.current = "";
-                  setDataState((state) => ({
-                    ...state,
-                    busyAction: false,
-                    error: error.message || "Could not generate challenges.",
-                  }));
-                });
+                generateChallenges()
+                  .then(() =>
+                    setDataState((state) => ({ ...state, generating: false })),
+                  )
+                  .catch((error) => {
+                    generationRequested.current = "";
+                    setDataState((state) => ({
+                      ...state,
+                      generating: false,
+                      challengeError:
+                        error.message || "Could not generate challenges.",
+                    }));
+                  });
               }
             },
             (error) =>
               setDataState((state) => ({
                 ...state,
-                busyAction: false,
-                error: error.message,
+                generating: false,
+                challengeError: error.message,
               })),
           );
         });
@@ -1998,15 +2320,7 @@ function App() {
     }
     setProfile(null);
     setIsDemo(false);
-    setDataState({
-      user: null,
-      group: null,
-      groupContribution: 0,
-      challenges: [],
-      leaderboard: [],
-      busyAction: false,
-      error: "",
-    });
+    setDataState(emptyDataState);
   };
 
   return profile ? (
